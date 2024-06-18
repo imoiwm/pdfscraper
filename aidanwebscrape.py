@@ -1,20 +1,46 @@
 from selenium import webdriver
 from selenium.webdriver.common.keys import Keys
 from selenium.webdriver.common.by import By
+from selenium.webdriver.common.action_chains import ActionChains
 import time
 import os
 import csv
+import sys
+from threading import Thread
+import queue
 
 """
-This program is run by downloading the Python file
-and then running it using the following command
+
+Prerequisite downloads:
+
+- Make sure Python is installed
+- This Python file
+- Download your provider list from Excel as a .csv file
+
+First, modify the num_threads variable to match the number of cores on your CPU.
+You can check how many cores there are by running the following lines in Python:
+>> import multiprocessing
+>> cpu_count = multiprocessing.cpu_count()
+>> print(cpu_count)
+
+Then run this program using the following command and replacing "{.csv filename}" with the actual filename, leaving out the curly braces:
 (note the $ at the beginning is to denote the command line):
 
 $ python aidanwebscrape.py {.csv filename}
 
+The files will download to a folder called "InspectionReports" in the same directory as the program itself.
 
-TODO: see if we can move the files to a specific folder instead of just Downloads
+NOTE: This program took what I approximated to be an hour or two for about 250 providers in a sample .csv I ran.
+I would suggest that, unless you want to run this program and babysit the computer for 40-50 hours,
+that you chunk out sections of the full provider list into their own .csv files and then run it over those.
+Let me know if you come across any other issues/problems/requests with the program. Thank you!
+
+TODO: 
+- Multiprocessing/further optimization
+- Remove occasional errors
 """
+
+
 
 """
 Taken from 
@@ -36,12 +62,19 @@ def download_wait():
         seconds += 1
     return seconds
 
-def providers_from_csv(filename):
-    res = []
+
+
+"""
+Given a .csv file, returns a list of its provider numbers.
+See the notes below for decal_pdfs() for .csv file formatting
+"""
+def providers_from_csv(arr, filename):
     with open(filename, newline='') as csvfile:
         reader = csv.DictReader(csvfile)
         for row in reader:
-            res.append(row['provider_number'])
+            arr.append(row['Provider_Number'])
+
+
 
 """
 Where the primary logic is performed
@@ -53,39 +86,75 @@ Note that for your purposes with DECAL,
 this can be done by exporting the spreadsheet in Google Sheets
 (didn't test for Microsoft Excel) as a .csv
 """
-def decal_pdfs(providers):
-    # Prefix URLs for the search results and the provider breakdown pages, respectively
+def start_threads(providers):
+
+    # Create a directory to save the PDFs if it doesn't exist
+    os.makedirs('InspectionReports', exist_ok=True)
+    url_queue = queue.Queue()
+    for url in providers:
+        url_queue.put(url)
+
+    # Worker function to process URLs from the queue
+    def worker():
+        while not url_queue.empty():
+            url = url_queue.get()
+            try:
+                download_pdfs(url)
+            finally:
+                url_queue.task_done()
+
+    # Number of threads
+    num_threads = 12  # Adjust based on your system capabilities
+
+    # Create and start threads
+    threads = []
+    for _ in range(num_threads):
+        thread = Thread(target=worker)
+        thread.start()
+        threads.append(thread)
+
+    # Wait for all threads to finish
+    for thread in threads:
+        thread.join()
+        
+
+def download_pdfs(urlAdd):
+    # Prefix URL for the search results
     search_url = "https://families.decal.ga.gov/ChildCare/Results?name="
-    base_url = "https://families.decal.ga.gov/ChildCare/"
 
-    driver = webdriver.Chrome()
-    for pn in providers:
-        driver.get(search_url + pn)
+    chrome_options = webdriver.ChromeOptions()
+    chrome_options.add_argument("--log-level=1")
+    chrome_options.add_argument("--disable-extensions")
+    chrome_options.add_argument('--ignore-certificate-errors')
+    prefs = {"download.default_directory": os.path.join(os.getcwd(), 'InspectionReports'), "profile.managed_default_content_settings.images": 2, 'browser.helperApps.neverAsk.saveToDisk': 'application/pdf'}
+    chrome_options.add_experimental_option("prefs", prefs)
+    driver = webdriver.Chrome(options=chrome_options)
+    #driver.execute_cdp_cmd("Page.setDownloadBehavior", {"behavior": "allow", "downloadPath": "C:/Users/Warren/Downloads"})
+    driver.get(search_url + urlAdd)
 
-        # Handles case of multiple search results for provider number just as precaution
-        # Otherwise, main purpose is to grab the link from clicking on the "View" button in the search results
-        detail_suffix = []
-        for result in driver.find_elements(By.XPATH, "//a[@data-track-name='View Provider - Button']"):
-            detail_suffix.append(result.get_attribute('href'))
+    # Array and for ds loop below handle case of multiple search results for provider number just as precaution
+    # Otherwise, main purpose is to grab the link from clicking on the "View" button in the search results
+    detail_suffix = []
+    for result in driver.find_elements(By.XPATH, "//a[@data-track-name='View Provider - Button']"):
+        detail_suffix.append(result.get_attribute('href'))
 
-        # For each URL grabbed from the "View" buttons in the search results
-        for ds in detail_suffix:
-            # Left in a total recorded count of PDFs downloaded for troubleshooting purposes
-            count = 0
+    # For each URL grabbed from the "View" buttons in the search results
+    for ds in detail_suffix:
+        # Left in a total recorded count of PDFs downloaded for troubleshooting purposes
+        count = 0
+        
+        driver.get(ds)
 
-            # Generate the page from the specified URL
-            driver.get(ds)
+        # Have Selenium click to download each PDF under the "Inspection Report" section
+        for b in driver.find_elements(By.XPATH, "//a[@title='View Inspection Report']"):
+            b.click()
+            count += 1
+        
+        download_wait()
+        print(f"Downloaded {count} files from provider {urlAdd}")
+    driver.close()
+      
 
-            # Have Selenium click to download each PDF under the "Inspection Report" section
-            for b in driver.find_elements(By.XPATH, "//a[@title='View Inspection Report']"):
-                count += 1
-                b.click()
-            assert "No results found." not in driver.page_source
-
-            # Wait to make sure all downloads complete
-            download_wait()
-            print(f"Downloaded {count} files from provider number {pn}")
-        driver.close()
 
 
 if __name__ == "__main__":
@@ -93,5 +162,9 @@ if __name__ == "__main__":
 
     #TODO this line takes in the filename passed as a function parameter
     #TODO need to test this program on a smaller subset of the initial .csv
-    provider_numbers = providers_from_csv(filename)
-    decal_pdfs(provider_numbers)
+    provider_numbers = []
+    
+    providers_from_csv(provider_numbers, sys.argv[1])
+    print(f"Loaded {len(provider_numbers)} providers")
+    start_threads(provider_numbers)
+    print("Download Complete!")
