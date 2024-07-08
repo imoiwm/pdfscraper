@@ -10,7 +10,6 @@ from threading import Thread
 import queue
 
 """
-
 Prerequisite downloads:
 
 - Make sure Python is installed
