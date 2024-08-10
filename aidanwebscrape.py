@@ -35,7 +35,6 @@ that you chunk out sections of the full provider list into their own .csv files 
 Let me know if you come across any other issues/problems/requests with the program. Thank you!
 
 TODO: 
-- Multiprocessing/further optimization
 - Remove occasional errors
 """
 
@@ -88,7 +87,7 @@ this can be done by exporting the spreadsheet in Google Sheets
 def start_threads(providers):
 
     # Create a directory to save the PDFs if it doesn't exist
-    os.makedirs('InspectionReports', exist_ok=True)
+    
     url_queue = queue.Queue()
     for url in providers:
         url_queue.put(url)
@@ -98,6 +97,7 @@ def start_threads(providers):
         while not url_queue.empty():
             url = url_queue.get()
             try:
+                os.makedirs(url, exist_ok=True)
                 download_pdfs(url)
             finally:
                 url_queue.task_done()
@@ -125,7 +125,7 @@ def download_pdfs(urlAdd):
     chrome_options.add_argument("--log-level=1")
     chrome_options.add_argument("--disable-extensions")
     chrome_options.add_argument('--ignore-certificate-errors')
-    prefs = {"download.default_directory": os.path.join(os.getcwd(), 'InspectionReports'), "profile.managed_default_content_settings.images": 2, 'browser.helperApps.neverAsk.saveToDisk': 'application/pdf'}
+    prefs = {"download.default_directory": os.path.join(os.getcwd(), urlAdd), "profile.managed_default_content_settings.images": 2, 'browser.helperApps.neverAsk.saveToDisk': 'application/pdf'}
     chrome_options.add_experimental_option("prefs", prefs)
     driver = webdriver.Chrome(options=chrome_options)
     #driver.execute_cdp_cmd("Page.setDownloadBehavior", {"behavior": "allow", "downloadPath": "C:/Users/Warren/Downloads"})
@@ -157,10 +157,6 @@ def download_pdfs(urlAdd):
 
 
 if __name__ == "__main__":
-    #provider_number = input("Please input the DECAL provider number: ")
-
-    #TODO this line takes in the filename passed as a function parameter
-    #TODO need to test this program on a smaller subset of the initial .csv
     provider_numbers = []
     
     providers_from_csv(provider_numbers, sys.argv[1])
