@@ -1,4 +1,4 @@
-# PDFScrape
+# PDFScraper
 
 Originally built for a friend's project.
 
